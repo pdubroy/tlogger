@@ -78,3 +78,7 @@ of modifying or deleting the original.
 of a site is. This is useful if the user is willing to reveal the identity of
 some of the sites they visit, e.g. search engines.
 
+Log files can be compiled into a higher-level format using the 'tlogger'
+Python module in the tools directory (or tools/compile.sh, which is a trivial
+wrapper).
+
