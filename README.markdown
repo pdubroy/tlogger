@@ -1,4 +1,4 @@
-# About
+# About tlogger
 
 tlogger is a Firefox extension for capturing click-stream web browsing logs.
 In other words, it collects data about how the browser is used. Mainly it
@@ -17,8 +17,10 @@ the actual URI is. It's also not possible to make comparisons between users.
 - it can log a few things that Spectator can't, like when javascript on a web page changes window.location.href.
 
 tlogger was originally developed for web browsing study performed in late 2008
-by Patrick Dubroy at the University of Toronto. The "t" stands for *tab*, or
-maybe *Toronto* -- take your pick.
+by [Patrick Dubroy](http://dubroy.com) at the University of Toronto. The "t" stands for "tab", or
+maybe "Toronto" -- take your pick.
+
+The tlogger source is managed on GitHub at <http://github.com/pdubroy/tlogger/>.
 
 ## License
 
@@ -54,6 +56,8 @@ this directory. E.g.,
 You can create an XPI for distribution by simply zipping up the contents of
 this directory. The XPI can then be installed by navigating to the XPI in
 Firefox (either on disk or on a webserver).
+
+You can find the (hopefully) latest XPI [here](http://dubroy.com/tlogger/tlogger.xpi).
 
 ## Log file
 
