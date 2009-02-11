@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<?xml-stylesheet href="chrome://tlogger/skin/tlogger.css" type="text/css"?>
+<overlay id="com.dubroy.tlogger"
+		xmlns:html="http://www.w3.org/1999/xhtml"
+		xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
+	<script type="application/x-javascript" src="chrome://tlogger/content/parseUri.js"/>
+	<script type="application/x-javascript" src="chrome://tlogger/content/tlogger.js"/>
+
+	<menupopup id="menu_ToolsPopup">
+		<menu label="TLogger" insertbefore="javascriptConsole">
+			<menupopup>
+				<menuitem label="Show log file"
+					oncommand="Components.classes['@dubroy.com/tlogger/globals;1'].getService().wrappedJSObject.showLogFile();"/>
+				<menuitem label="Search for site"
+					oncommand="com_dubroy_tlogger.searchForSite();"/>
+			</menupopup>
+		</menu>
+	</menupopup>
+
+	<statusbar id="status-bar">
+		<statusbarpanel id="screengrab_panel" 
+						class="statusbarpanel-menu-iconic" 
+						src="chrome://tlogger/skin/report.png"
+						collapsed="false"
+						insertafter="statusbarpanel-progress"
+						persist="collapsed"
+						tooltiptext="tlogger is running">
+						
+			<!-- Required for Screengrab to work -->	
+			<vbox flex="1">
+				<scrollbox width="1" height="1">
+					<html:canvas id="screengrab_buffer_canvas" style="display: none"/>
+				</scrollbox>
+			</vbox>
+
+		</statusbarpanel>
+	</statusbar>	
+</overlay>

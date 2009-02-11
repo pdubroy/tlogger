@@ -1,0 +1,36 @@
+@namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
+
+.tlogger-notification {
+	background-color: LightGoldenrodYellow;
+	background-image: none;
+	color: InfoText;
+}
+
+.tlogger-notification .messageText {
+	-moz-box-flex: 0;
+	display: none;
+}
+
+.tlogger-notification .real-message-container {
+	-moz-box-flex: 1;
+}
+
+.tlogger-notification spacer {
+	-moz-box-flex: 0;
+	display: none;
+}
+
+.tlogger-notification .my-spacer {
+	display: inline;
+}
+
+.tlogger-notification description {
+	margin-top: 2px;
+	font-weight: normal;
+	-moz-margin-start: 5px;
+}
+
+.tlogger-notification label {
+	font-weight: bold;
+}
+

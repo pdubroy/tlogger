@@ -1,0 +1,4 @@
+content tlogger content/
+overlay chrome://browser/content/browser.xul chrome://tlogger/content/tlogger.xul
+overlay chrome://browser/content/history/history-panel.xul  chrome://tlogger/content/history.xul
+skin tlogger classic/1.0 skin/
