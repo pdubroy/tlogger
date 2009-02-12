@@ -894,6 +894,8 @@ def compile(path, debug):
 			pdb.post_mortem(tb)
 		else:
 			raise
+		# Signal the error by returning None
+		return None
 	result = event_stream
 	event_stream = logger = None
 	return result
