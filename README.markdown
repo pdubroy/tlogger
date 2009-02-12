@@ -47,14 +47,14 @@ tlogger can be installed like any old Firefox add-on.
 Go to your Firefox profile (see [here](http://support.mozilla.com/kb/Profiles)
 for instructions on how to find it). In the "extensions" directory, create a
 file named "tlogger@dubroy.com" containing a single line with the path to
-this directory. E.g.,
+the extension directory. E.g.,
 
-  /Users/Patrick/dev/tlogger
+  /Users/Patrick/dev/tlogger/extension
   
 **Distribution:**
 
 You can create an XPI for distribution by simply zipping up the contents of
-this directory. The XPI can then be installed by navigating to the XPI in
+that directory. The XPI can then be installed by navigating to the XPI in
 Firefox (either on disk or on a webserver).
 
 You can find the (hopefully) latest XPI [here](http://dubroy.com/tlogger/tlogger.xpi).
