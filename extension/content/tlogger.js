@@ -332,7 +332,7 @@ function window_onload() {
 		log_write = globals.buildLogFunction({"win":getWindowId()});
 
 		// A succinctly-named convenience function
-		obf = globals.stringTable.obfuscateString;	
+		obf = globals.obfuscateString;
 
 		log_write("window_onload");
 	} catch (ex) {
@@ -1418,7 +1418,7 @@ function searchForSite(exact)
 	try {
 		var str = prompt("Enter string to search for:");
 		if (str) {
-			var matches = globals.stringTable.search(str);
+			var matches = globals.searchStringTable(str);
 			var hostnames = [];
 			for each (var hit in matches) {
 				// Check if the hit looks like a hostname

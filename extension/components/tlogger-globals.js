@@ -62,7 +62,6 @@ function TLoggerGlobals() {
 	var nextWindowId = 0;
 	var log;
 	var focusLog;
-	var stringTable;
 	
 	const FORMAT_HEX = 16;
 
@@ -216,7 +215,7 @@ function TLoggerGlobals() {
 		
 		// Return the public functions
 		return { "obfuscateString":obfuscateString, "search":search };
-	}
+	}	
 	
 	/*
 	 * Log Class
@@ -371,7 +370,17 @@ function TLoggerGlobals() {
 		.getService(Ci.nsIObserverService);
 	service.addObserver(globalObserver, "quit-application", false);
 
-	stringTable = new StringTable();
+	// For now, always create the string table...
+	var stringTable = new StringTable();
+
+	// ...but set the obfuscation function based on the pref
+	var obfuscateString;
+	var prefManager = Cc["@mozilla.org/preferences-service;1"].getService(Ci.nsIPrefBranch);
+	if (prefManager.getBoolPref("extensions.tlogger.obfuscateURLs")) {
+		obfuscateString = stringTable.obfuscateString;
+	} else {
+		obfuscateString = function(str) { return str; }; // no-op
+	}	
 
 	// Public members
 	this.QueryInterface = QueryInterface;
@@ -380,10 +389,12 @@ function TLoggerGlobals() {
 	this.getDataDirFile = getDataDirFile;
 	this.getLog = getLog;
 	this.getFocusLog = getFocusLog;
-	this.stringTable = stringTable;
 	this.lastQuestionTimeMillis = lastQuestionTimeMillis;
 	this.firefoxMajorVersion = firefoxMajorVersion;
 	this.showLogFile = showLogFile;
+
+	this.obfuscateString = obfuscateString;
+	this.searchStringTable = stringTable.search;
 };
 
 
