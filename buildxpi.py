@@ -15,9 +15,10 @@ if __name__ == "__main__":
 	if len(sys.argv) != 2:
 		print "Usage: %s OUTFILE" % script_name
 		print "Create an XPI archive for the tlogger Firefox extension."
-		return_code = 0 if len(sys.argv) == 1 else 1
-		sys.exit(return_code)
-
+		if len(sys.argv) == 1:
+			sys.exit(1)
+		sys.exit(0)
+		
 	orig_dir = os.getcwd()
 	zipf = zipfile.ZipFile(sys.argv[1], "w")
 	try:
@@ -26,7 +27,11 @@ if __name__ == "__main__":
 		os.chdir(ext_dir)
 		for root, dirs, files in os.walk("."):
 			for name in files:
-				filename = os.path.join(root, name)
+				
+				if root == ".":
+					filename = name
+				else:
+					filename = os.path.join(root, name)
 				zipf.write(filename)
 				print "  adding: %s" % filename
 	finally:
