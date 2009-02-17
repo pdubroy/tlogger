@@ -38,10 +38,16 @@ __license__ = "GNU GPL v2"
 __all__ = ["LogIterator", "compile"]
 
 import re
+
+# Get a JSON library. Prefer cjson if it's installed (much faster),
+# but fall back to json (if Python >= 2.6) or simplejson
 try:
-	import json
-except:
-	import simplejson as json
+	import cjson as json
+except ImportError:
+	try:
+		import json
+	except ImportError:
+		import simplejson as json
 
 import compile
 
@@ -111,9 +117,10 @@ class LogIterator(object):
 				raise Exception(description)
 			json_text = match.groups()[-1]
 			try:
-			# Is specifying latin-1 necessary or even correct?
-			#	event_obj = json.loads(json_text, encoding="latin-1")
-				event_obj = json.loads(json_text)
+				if json.__name__ == "cjson":
+					event_obj = json.decode(json_text)
+				else:
+					event_obj = json.loads(json_text)
 			except Exception, e:
 				raise Exception(
 					("Line %s - Exception parsing JSON: " + str(e)) % self._line_count)

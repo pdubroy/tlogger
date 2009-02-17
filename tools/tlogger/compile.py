@@ -24,10 +24,17 @@ __license__ = "GNU GPL v2"
 import collections
 import logging as _logging
 import pdb
+
+# Get a JSON library. Prefer cjson if it's installed (it's about 10x faster),
+# but fall back to json (if Python >= 2.6) or simplejson
 try:
-	import json
-except:
-	import simplejson as json
+	import cjson as json
+except ImportError:
+	try:
+		import json
+	except ImportError:
+		import simplejson as json
+
 import sys
 import traceback
 
@@ -154,22 +161,26 @@ def Event(orig_event, name=None, keys=None, **kwargs):
 		copied from the original event. Any kwargs specified will also be added 
 		to the event data."""
 
-		# If no keys are specified, use all the keys from the original event
-		if keys is not None:
-			data = {}
-			for key in keys:
-				data[key] = orig_event[key]
-		else:
-			data = orig_event.copy()
+		data = {}
 
-		# Always copy the 'time' field
-		if "time" in orig_event:
-			data["time"] = orig_event["time"]
+		# If no keys are specified, use all the keys from the original event
+		if orig_event is not None:
+			if keys is not None:
+				for key in keys:
+					data[key] = orig_event[key]
+			else:
+				data = orig_event.copy()
+
+			# Always copy the 'time' field
+			if "time" in orig_event:
+				data["time"] = orig_event["time"]
 
 		data.update(kwargs)
 
 		# If the name is not specified, use the name of the original event
 		data["event"] = name or orig_event["event"]
+
+		_assert("time" in data, "Event must have a time")
 
 		return data
 	
@@ -186,6 +197,9 @@ class Window(object):
 		self.tlogger_init = False
 		self.navigation_causes = collections.deque()
 		self.pending_tab_close_index = -1
+
+	def __str__(self):
+		return self.winId
 
 	def insert_tab(self, tab, index):
 		"""Insert the tab at the given index. If the index exceeds the current
@@ -221,11 +235,11 @@ class Window(object):
 		_assert(tab.get_index() == index, "%s has inconsistent tabIndex" % tab.tabId)
 		
 class Tab(object):
-	def __init__(self, win, tab_reg_event, cause, opened_new_tab_with):
+	def __init__(self, win, tab_reg_event, cause_event, opened_new_tab_with):
 		# These attributes always exist
 		self.tabId = tab_reg_event["tabId"]
 		self.win = win
-		self.tab_open_cause = cause
+		self.tab_open_cause = cause_event
 		self.opened_new_tab_with = opened_new_tab_with
 
 		self.tab_open_event = None
@@ -236,6 +250,9 @@ class Tab(object):
 		
 		# Ensure that a nav cause can never occur before the cause of a previous nav action
 		self.last_navigation_time = 0
+
+	def __str__(self):
+		return self.tabId
 
 	def complete_tab_open(self, event):
 		self.set_index(int(event["tabIndex"]))
@@ -251,7 +268,8 @@ class Tab(object):
 			if self.opened_new_tab_with:
 				cause_descr += "+openNewTabWith"
 		
-		self.tab_open_event = Event(event, "tab_open", cause=cause_descr)
+		self.tab_open_event = Event(
+			event, "tab_open", cause=cause_descr, tab_count=len(self.win.tabs))
 		event_stream.append(self.tab_open_event)
 
 	def has_navigated(self):
@@ -298,11 +316,11 @@ class Tab(object):
 				
 		return (cause, javascript_used)
 
-	def _new_navigation_action(self, nav_event):
+	def _new_navigation_action(self, nav_event, from_url):
 		url = nav_event["href"]
 		cause, js_used = self._get_navigation_cause(nav_event)
 		self.last_navigation_time = nav_event["time"]
-		return NavigationAction(self, url, cause, js_used)
+		return NavigationAction(self, url, from_url, cause, js_used)
 
 	def load_start(self, event):
 		url = event["href"]
@@ -320,7 +338,7 @@ class Tab(object):
 			# Ignore all events for about:blank on a new tab
 			return
 
-		new_nav_action = self._new_navigation_action(event)
+		new_nav_action = self._new_navigation_action(event, self.current_url)
 		cause_descr = new_nav_action.cause["event"] if new_nav_action.cause else "unknown"
 		
 		if self.nav_action and self.nav_action.cause == new_nav_action.cause:
@@ -333,13 +351,20 @@ class Tab(object):
 		
 		# The events have distinct causes, so assume they're separate events
 		if self.nav_action:
+			old_cause = self.nav_action.get_cause_descr()
+			new_cause = new_nav_action.get_cause_descr()
 			if self.nav_action.url == url:
-				if self.nav_action.get_cause_descr() == new_nav_action.get_cause_descr():
+				if old_cause == new_cause:
 					logger.info("Duplicate load_starts caused by %s %ss apart" % 
 						(cause_descr, seconds_between(self.nav_action.cause, new_nav_action.cause)))
 				else:
 					logger.info("Duplicate load_start events, but different causes")
+			else:
+				time_diff = (event["time"] - self.nav_action.start_time)/1000.
+				logger.warning("load_start[%s] %.2fs after load_start[%s]" %
+					(new_cause, time_diff, old_cause))
 			self.last_nav_action = self.nav_action
+			self.last_nav_action.emit_event()
 
 		self.nav_action = new_nav_action			
 		self.nav_action.load_start(url, event["time"])
@@ -355,7 +380,7 @@ class Tab(object):
 				# Ignore all events for about:blank on a new tab
 				return
 
-			nav_action = self._new_navigation_action(event)
+			nav_action = self._new_navigation_action(event, self.current_url)
 			
 			if not self.has_navigated():
 				if nav_action.cause is None:
@@ -390,9 +415,10 @@ class Tab(object):
 		self.restored = True
 
 class NavigationAction(object):
-	def __init__(self, tab, url, cause_evt, javascript_used):
+	def __init__(self, tab, url, from_url, cause_evt, javascript_used):
 		self.tab = tab
 		self.url = url
+		self.from_url = from_url or ""
 		self.cause = cause_evt
 		self.cause_time = None 
 		self.javascript_used = javascript_used
@@ -418,7 +444,8 @@ class NavigationAction(object):
 	def check_url(self, url, event_name):
 		if self.url != url:
 			if not (event_name == "load" and self._is_hash_change_only(self.url, url)):
-				logger.warning("%s (%s) doesn't match nav action (%s)" % (event_name, url, self.url))
+				logger.warning("%s (%s) doesn't match nav action (%s)" % 
+					(event_name, url, self.url))
 				
 	def load_start(self, url, start_time):
 		if self.load_started:
@@ -458,11 +485,7 @@ class NavigationAction(object):
 		if self.start_time is None:
 			self.start_time = self.location_change_time
 
-		# TODO: Not sure why this method is necessary. Seems ugly.
-		nav_event = self.create_event(
-			tabId=event["tabId"], tabIndex=event["tabIndex"], win=event["win"])
-		event_stream.append(nav_event)
-		
+		self.emit_event()
 		return True
 			
 	def load(self, url, timestamp):
@@ -477,13 +500,14 @@ class NavigationAction(object):
 			return "unknown"
 		return self.cause["event"]
 
-	def create_event(self, **kwargs):
-		# Bit of a hack here, to allow kwargs to be passed through to the Event
-		nav_event = Event(kwargs, "navigation", 
-			keys={},
+	def emit_event(self):
+		nav_event = Event(None, "navigation",
 			time=self.start_time,
+			win=str(self.tab.win),
+			tabId=str(self.tab),
 			url=self.url,
-			**kwargs)
+			from_url=self.from_url,
+			location_changed=(self.location_change_time != 0))
 		cause_descr = self.get_cause_descr()
 		if self.cause_time is not None:
 			diff_in_secs = (self.start_time - self.cause_time) / 1000.0
@@ -491,7 +515,7 @@ class NavigationAction(object):
 		if self.javascript_used:
 			cause_descr += "+js"
 		nav_event["cause"] = cause_descr
-		return nav_event
+		event_stream.append(nav_event)
 			
 class BrowserState(object):
 	def __init__(self):
@@ -554,17 +578,17 @@ class BrowserState(object):
 		win = self.get_window(tab_reg_event)
 
 		# Determine what caused the tab to be opened
-		cause = self.event_history[-1]
+		cause_event = self.event_history[-1]
 		openNewTabWith = False
-		if cause["event"] == "window_onload":
+		if cause_event["event"] == "window_onload":
 			if len(win.tabs) != 0:
 				logger.error("Expected to be first tab on window")
-		elif cause["event"] == "openNewTabWith":
+		elif cause_event["event"] == "openNewTabWith":
 			# The user chose to open a link in a new tab. Find the root cause
 			openNewTabWith = True
-			cause = self.event_history[-2]
+			cause_event = self.event_history[-2]
 		
-		tab = Tab(win, tab_reg_event, cause, openNewTabWith)
+		tab = Tab(win, tab_reg_event, cause_event, openNewTabWith)
 		self._all_tabs[tabId] = tab
 		return tab
 		
@@ -670,7 +694,7 @@ class BrowserState(object):
 				# adjusted yet. Remember the index to recover from this.
 				win.pending_tab_close_index = tab.get_index()
 			win.tabs.remove(tab)
-			event_stream.append(Event(event, "tab_close"))
+			event_stream.append(Event(event, "tab_close", tab_count=len(win.tabs)))
 		elif name in ["openNewTabWith", "openNewWindowWith"]:
 			# These events will be used once the window/tab is opened
 			pass
@@ -731,7 +755,7 @@ class BrowserState(object):
 						
 				if matching_event:
 					matching_event["cause"] = "bookmark_visit"
-					# TODO: Insert a check that it was the last nav event that occurred on the tab
+					# TODO: Check that it was the last nav event that occurred on the tab
 				else:
 					logger.warning("No matching nav event for bookmark_visit to " + event["url"])
 		elif is_navigation_cause(event):
@@ -905,7 +929,11 @@ def write_to_file(events, f):
 		event = event.copy()
 		timestamp = event["time"]
 		del event["time"] # Don't want this in the JSON output
-		f.write("%s %s\n" % (timestamp, json.dumps(event)))
+		if json.__name__ == "cjson":
+			json_output = json.encode(event)
+		else:
+			json_output = json.dumps(event)
+		f.write("%s %s\n" % (timestamp, json_output))
 
 def main(input_filename, output_filename=None, debug=False):
 	"""
