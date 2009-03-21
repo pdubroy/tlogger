@@ -120,31 +120,39 @@ def seconds_between(event1, event2):
 # Debug helpers -- some simple code for debugging problems with log files.
 #-----------------------------------------------------------------------------
 
-_logging.basicConfig(level=_logging.INFO, format="%(levelname)s: %(message)s")
-
 class MyLogger(object):
 	"""A custom Logger-like class whose sole purpose is to allow us to
 	include the line number from the data file in the messages. There are 
 	other ways to do this, but they're all more complicated than this."""
 
 	def __init__(self, iterator):
+		# By creating everything we need for logging at this point,
+		# it allows the caller to redirect sys.stderr
+		self._logger = _logging.getLogger("tlogger.compile")
+		self._logger.setLevel(_logging.INFO)
+		self._handler = _logging.StreamHandler(sys.stderr)
+		self._handler.setFormatter(_logging.Formatter("%(levelname)s: %(message)s"))
+		self._logger.addHandler(self._handler)
 		self._it = iterator
 
+	def cleanup(self):
+		self._logger.removeHandler(self._handler)
+
 	def debug(self, msg, *args, **kwargs):
-		_logging.debug(("  (%5s) " % self._it._line_count) + msg, *args, **kwargs)
+		self._logger.debug(("  (%5s) " % self._it._line_count) + msg, *args, **kwargs)
 
 	def info(self, msg, *args, **kwargs):
-		_logging.info(("   (%5s) " % self._it._line_count) + msg, *args, **kwargs)
+		self._logger.info(("   (%5s) " % self._it._line_count) + msg, *args, **kwargs)
 
 	def warning(self, msg, *args, **kwargs):
-		_logging.warning(("(%5s) " % self._it._line_count) + msg, *args, **kwargs)
+		self._logger.warning(("(%5s) " % self._it._line_count) + msg, *args, **kwargs)
 
 	def error(self, msg, *args, **kwargs):
 		self._print_error(msg, *args, **kwargs)
 		raise Exception, msg
 
 	def _print_error(self, msg, *args, **kwargs):
-		_logging.error((" (%5s) " % self._it._line_count) + msg, *args, **kwargs)
+		self._logger.error((" (%5s) " % self._it._line_count) + msg, *args, **kwargs)
 
 def _assert(condition, msg=""):
 	if not condition:
@@ -898,6 +906,7 @@ def compile(path, debug):
 	debug -- Drop to the Python debugger (pdb) on an unhandled exception
 
 	"""
+
 	event_iterator = tlogger.LogIterator(path)
 
 	global event_stream, logger
@@ -920,8 +929,11 @@ def compile(path, debug):
 			raise
 		# Signal the error by returning None
 		return None
-	result = event_stream
-	event_stream = logger = None
+	finally:
+		result = event_stream
+		event_stream = None
+		if logger:
+			logger.cleanup()
 	return result
 	
 def write_to_file(events, f):
