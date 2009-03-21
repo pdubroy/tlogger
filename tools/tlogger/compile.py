@@ -136,6 +136,7 @@ class MyLogger(object):
 		self._it = iterator
 
 	def cleanup(self):
+		self._handler.close()
 		self._logger.removeHandler(self._handler)
 
 	def debug(self, msg, *args, **kwargs):
