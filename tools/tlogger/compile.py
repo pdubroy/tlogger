@@ -301,7 +301,6 @@ class Tab(object):
 		if browser_state.event_history[-1]["event"] == "js_location_change":
 			javascript_used = True
 
-
 		for tab, evt in reversed(self.win.navigation_causes):
 			# Don't search too far back
 			if evt["time"] < self.last_navigation_time or seconds_between(nav_event, evt) > 5:
@@ -322,7 +321,9 @@ class Tab(object):
 			# If the URL is there, make sure they match. Too many false negatives with js though
 			if not javascript_used and cause_url and cause_url != url:
 				logger.warning("Nav action %s for %s URL %s" % (cause_url, cause["event"], url))
-				
+		elif self.last_navigation_time == 0:
+			cause = self.tab_open_cause
+
 		return (cause, javascript_used)
 
 	def _new_navigation_action(self, nav_event, from_url):
@@ -578,7 +579,6 @@ class BrowserState(object):
 			# Check if the window was very recently closed
 			return win_id == event["win"] and (event["time"] - time) < 500
 		return False
-		
 
 	def new_tab(self, tab_reg_event):
 		tabId = tab_reg_event["tabId"]
