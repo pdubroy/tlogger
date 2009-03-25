@@ -333,9 +333,9 @@ class Tab(object):
 			elif cause is None and tab is self:
 				cause = evt
 
-		# Commented out because we've still got some bogus tab_open causes
-#		if cause is None and self.last_navigation_time == 0:
-#			cause = self.tab_open_cause
+		# If this is the first nav action on this tab, take cause from tab_open
+		if cause is None and self.last_navigation_time == 0:
+			cause = self.tab_open_cause
 
 		if cause:
 			cause_url = get_url(cause, None)
