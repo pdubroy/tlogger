@@ -49,8 +49,6 @@ __all__ = ["compile", "write_to_file"]
 
 # User-triggered events which can be the cause of a navigation action
 USER_NAVIGATION_EVENTS = [
-	"NEW_WINDOW",
-	"NEW_TAB",
 	"URLBarCommand",
 	"SearchBarSearch",
 	"RightClickSearch",
@@ -60,8 +58,11 @@ USER_NAVIGATION_EVENTS = [
 	"BrowserHomeClick", # Fx2 only
 	"openOneBookmark", # Fx2 only
 	"history openURLIn", # Fx2 only
+	"NEW_WINDOW", # Opens the home page
 
 	# These don't always start a navigation action, but they can
+
+	"NEW_TAB", # Will normally open a blank page
 	"DOCUMENT_CLICK",
 	"window_mousedown",
 	"document_mousedown"
@@ -112,9 +113,12 @@ def get_url(event, default=None):
 def millis_between(event1, event2):
 	return abs(event1["time"] - event2["time"])
 	
-def seconds_between(event1, event2):
-	"""Returns a float indicating the number of seconds between the two events."""
-	return abs(event1["time"] - event2["time"]) / 1000.0
+def seconds_between(time_or_evt1, time_or_evt2):
+	"""Returns a float indicating the number of seconds between the events or times."""
+
+	time1 = time_or_evt1["time"] if isinstance(time_or_evt1, dict) else time_or_evt1
+	time2 = time_or_evt2["time"] if isinstance(time_or_evt2, dict) else time_or_evt2
+	return abs(time1 - time2) / 1000.0
 
 #-----------------------------------------------------------------------------
 # Debug helpers -- some simple code for debugging problems with log files.
@@ -202,7 +206,7 @@ class Window(object):
 		self.winId = win_id
 		self.tabs = []
 		self.gotohistoryindex_event = None
-		self.selected_tab = None
+		self._tab_selections = [] # A history of all tab selections
 		self.tlogger_init = False
 		self.navigation_causes = collections.deque()
 		self.pending_tab_close_index = -1
@@ -210,7 +214,22 @@ class Window(object):
 	def __str__(self):
 		return self.winId
 
-	def insert_tab(self, tab, index):
+	def get_selected_tab(self, millis=None):
+		if len(self._tab_selections) == 0:
+			return None
+
+		if millis is None:
+			return self._tab_selections[-1][1]
+
+		# Return the tab that was selected at the given time
+		for sel_time, tab in reversed(self._tab_selections):
+			if sel_time < millis:
+				return tab
+
+	def select_tab(self, millis, tab):
+		self._tab_selections.append((millis, tab))
+
+	def insert_tab(self, millis, tab, index):
 		"""Insert the tab at the given index. If the index exceeds the current
 		number of tabs, the tab array will be grown to accomodate it."""
 
@@ -220,7 +239,7 @@ class Window(object):
 			index -= 1
 
 		if len(self.tabs) == 0:
-			self.selected_tab = tab
+			self.select_tab(millis, tab)
 
 		if index < len(self.tabs):
 			# When TabOpen events arrive out of order, we put in placeholders.
@@ -264,7 +283,7 @@ class Tab(object):
 		return self.tabId
 
 	def complete_tab_open(self, event):
-		self.set_index(int(event["tabIndex"]))
+		self.win.insert_tab(event["time"], self, int(event["tabIndex"]))
 		
 		# Emit the top_open event
 		cause = self.tab_open_cause
@@ -288,14 +307,15 @@ class Tab(object):
 	def _get_navigation_cause(self, nav_event):
 		url = nav_event["href"]
 		cause = None
+		javascript_used = False
 
-		# The event itself might also indicate that it was caused by javascript
-		# We don't treat javascript as being a cause in and of itself
+		# Check if the event was triggered by javascript
+		# We don't treat that as a cause in and of itself, though.
+
+		# Look for the "cause" attribute; if it's not there, it's not js-caused
 		cause_attr = nav_event.get("cause", None)
 		if cause_attr:
 			javascript_used = cause_attr.startswith(("javascript:", "http"))
-		else:
-			javascript_used = False
 		
 		# In Fx2, js-caused events are preceded by a js_location_change event	
 		if browser_state.event_history[-1]["event"] == "js_location_change":
@@ -305,35 +325,48 @@ class Tab(object):
 			# Don't search too far back
 			if evt["time"] < self.last_navigation_time or seconds_between(nav_event, evt) > 5:
 				break
-			# Look for the last event that either happened on this tab, or has a matching URL
-			if get_url(evt, None) == url or tab is self:
-				# Found the cause, so break out of the loop
+
+			# If the URL matches, this is the most likely cause
+			if get_url(evt, None) == url:
 				cause = evt
 				break
+			elif cause is None and tab is self:
+				cause = evt
+
+		# Commented out because we've still got some bogus tab_open causes
+#		if cause is None and self.last_navigation_time == 0:
+#			cause = self.tab_open_cause
 
 		if cause:
 			cause_url = get_url(cause, None)
-		
-			# The HREF of a link might be a "javascript://" url
-			if cause_url and cause_url.startswith("javascript:"):
-				javascript_used = True
+			if cause_url:
+				# The HREF of a link might be a "javascript://" url
+				if cause_url.startswith("javascript:"):
+					javascript_used = True
 				
-			# If the URL is there, make sure they match. Too many false negatives with js though
-			if not javascript_used and cause_url and cause_url != url:
-				logger.warning("Nav action %s for %s URL %s" % (cause_url, cause["event"], url))
-		elif self.last_navigation_time == 0:
-			cause = self.tab_open_cause
+				# If the URL is there, make sure they match. Too many false negatives with js though
+				if not javascript_used and cause_url != url:
+					logger.warning("Nav action %s for %s URL %s" % (cause_url, cause["event"], url))
 
 		return (cause, javascript_used)
 
 	def _new_navigation_action(self, nav_event, from_url):
 		url = nav_event["href"]
+
+		# We don't have real key down events; insert a fake ones as appropriate
+		keyDownTime = nav_event["lastKeyDownTime"]
+		if browser_state.event_history[-1]["time"] < keyDownTime:
+			tab = self.win.get_selected_tab(keyDownTime)
+			self.win.navigation_causes.append(
+				(tab, { "event":"keyDown", "time":keyDownTime, "win":nav_event["win"] }))
+	
 		cause, js_used = self._get_navigation_cause(nav_event)
 		self.last_navigation_time = nav_event["time"]
 		return NavigationAction(self, url, from_url, cause, js_used)
 
 	def load_start(self, event):
 		url = event["href"]
+
 		if self.nav_action:
 			# See if we have consecutive load_start events on the same tab
 			prev_event = browser_state.event_history[-1]
@@ -415,9 +448,6 @@ class Tab(object):
 		except ValueError:
 			return -1
 			
-	def set_index(self, tabIndex):
-		self.win.insert_tab(self, tabIndex)
-
 	def set_restored(self):
 		"""This tab is being restored. There's no reason to ever do the opposite."""
 		if self.nav_action or self.last_nav_action:
@@ -545,7 +575,7 @@ class BrowserState(object):
 		win = self.get_window(event)
 		if "tabIndex" in event:
 			return win.tabs[event["tabIndex"]]
-		return win.selected_tab	
+		return win.get_selected_tab()	
 
 	def new_window(self, event):
 		win_id = event["win"]
@@ -607,7 +637,7 @@ class BrowserState(object):
 	def update_active_window(self, event):
 		win = self.windows[event["win"]]
 		self.active_window = win
-		if "tabId" in event and win.selected_tab.tabId != event["tabId"]:
+		if "tabId" in event and win.get_selected_tab().tabId != event["tabId"]:
 			logger.error("%s has inconsistent tabIndex" % event["name"])
 
 	def process_event(self, event):
@@ -691,13 +721,13 @@ class BrowserState(object):
 			win.tabs.insert(event["tabIndex"], tab)
 			event_stream.append(Event(event, "tab_move"))
 		elif name == "TabSelect":
-			win.selected_tab = tab
+			win.select_tab(event["time"], tab)
 			event_stream.append(Event(event, "tab_select"))
 			# tabIndex attributes should be consistent again; reset this value
 			win.pending_tab_close_index = -1
 		elif name == "TabClose":
-			if tab is win.selected_tab:
-				win.selected_tab = None
+			if tab is win.get_selected_tab():
+				win.select_tab(event["time"], None)
 				# When the selected tab is closed, any events up to and 
 				# including the next TabSelect won't have their tabIndex
 				# adjusted yet. Remember the index to recover from this.
