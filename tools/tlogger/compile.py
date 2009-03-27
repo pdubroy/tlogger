@@ -334,7 +334,7 @@ class Tab(object):
 				cause = evt
 
 		# If this is the first nav action on this tab, take cause from tab_open
-		if cause is None and self.last_navigation_time == 0:
+		if cause is None and not self.has_navigated():
 			cause = self.tab_open_cause
 
 		if cause:
@@ -347,7 +347,6 @@ class Tab(object):
 				# If the URL is there, make sure they match. Too many false negatives with js though
 				if not javascript_used and cause_url != url:
 					logger.warning("Nav action %s for %s URL %s" % (cause_url, cause["event"], url))
-
 		return (cause, javascript_used)
 
 	def _new_navigation_action(self, nav_event, from_url):
@@ -382,22 +381,24 @@ class Tab(object):
 			return
 
 		new_nav_action = self._new_navigation_action(event, self.current_url)
-		cause_descr = new_nav_action.cause["event"] if new_nav_action.cause else "unknown"
-		
-		if self.nav_action and self.nav_action.cause == new_nav_action.cause:
-			if self.nav_action.url == url:
-				logger.warning("Ignoring duplicate load_start (same URL and cause)")
-			else:
-				logger.error("Different load_starts (%s vs. %s) share cause %s" %
-					(self.nav_action.url, url, cause_descr))
-			return
-		
-		# The events have distinct causes, so assume they're separate events
+
+		# Check if we appear to be in the middle of a nav action (i.e., have seen
+		# load_start but no LocationChange yet		
 		if self.nav_action:
-			old_cause = self.nav_action.get_cause_descr()
-			new_cause = new_nav_action.get_cause_descr()
+			cause_descr = new_nav_action.get_cause_descr()
+			if self.nav_action.cause == new_nav_action.cause:
+				if self.nav_action.url == url:
+					logger.warning("Ignoring duplicate load_start (same URL and cause)")
+				else:
+					logger.error("Different load_starts (%s vs. %s) share cause %s" %
+						(self.nav_action.url, url, cause_descr))
+				return
+
+			# The events have distinct causes, so assume they're separate events
+
+			old_cause_descr = self.nav_action.get_cause_descr()
 			if self.nav_action.url == url:
-				if old_cause == new_cause:
+				if old_cause_descr == cause_descr:
 					logger.info("Duplicate load_starts caused by %s %ss apart" % 
 						(cause_descr, seconds_between(self.nav_action.cause, new_nav_action.cause)))
 				else:
@@ -405,9 +406,18 @@ class Tab(object):
 			else:
 				time_diff = (event["time"] - self.nav_action.start_time)/1000.
 				logger.warning("load_start[%s] %.2fs after load_start[%s]" %
-					(new_cause, time_diff, old_cause))
+					(cause_descr, time_diff, old_cause_descr))
 			self.last_nav_action = self.nav_action
 			self.last_nav_action.emit_event()
+		elif new_nav_action.cause is None:
+			prev = self.last_nav_action
+			if prev.is_loaded():
+				# If it's very soon after a load, good chance it's a meta redirect
+				# Maybe this happens quicker than 200ms?
+				if (event["time"] - prev.load_time) < 150:
+					new_nav_action.cause = {"event":"meta-redirect?"}
+			elif (event["time"] - prev.location_change_time) < 150:
+				new_nav_action.cause = {"event":"js-redirect?"}
 
 		self.nav_action = new_nav_action			
 		self.nav_action.load_start(url, event["time"])
