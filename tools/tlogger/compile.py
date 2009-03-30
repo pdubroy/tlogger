@@ -261,7 +261,85 @@ class Window(object):
 			index -= 1
 
 		_assert(tab.get_index() == index, "%s has inconsistent tabIndex" % tab.tabId)
-		
+
+class BackStack(object):
+	def __init__(self):
+		self._stack = []
+		self._current_index = -1
+
+	def process(self, nav_action):
+		cause_descr = nav_action.get_cause_descr()
+		url = nav_action.url
+		distance = 0
+
+		back_distance = self._search(self._current_index, url, backwards=True)
+		if back_distance is not None:
+			back_distance = abs(back_distance)
+		fwd_distance = self._search(self._current_index, url, backwards=False)
+
+		if cause_descr == "OnHistoryGoBack":
+			if back_distance is None:
+				logger.warning("No match for back URL")
+			else:
+				self._current_index -= back_distance
+				if back_distance != 1:
+					logger.info("Actual back distance: %d" % back_distance)
+		elif cause_descr == "BrowserForward":
+			if fwd_distance is None:
+				logger.warning("No match for forward URL")
+			else:
+				self._current_index += fwd_distance
+				if fwd_distance != 1:
+					logger.info("Actual fwd distance: %d" % fwd_distance)
+
+		# All nav actions will include these attributes, for info purposes
+		nav_action.back_distance = back_distance
+		nav_action.forward_distance = fwd_distance
+
+		if cause_descr == "gotoHistoryIndex":
+			index = nav_action.cause["index"]
+			# If the URL's not found at the given index, look for the closest match
+			matches = []
+			matches.append(self._search(index, url, backwards=False))
+			if matches[0] != 0:
+				matches.append(self._search(index, url, backwards=True))
+			matches = [x for x in matches if x is not None]
+			if len(matches) > 0:
+				matches.sort(lambda a, b: cmp(abs(a), abs(b)))
+				self._current_index = index + matches[0]
+				if matches[0] != 0:
+					logger.info("gotoHistoryIndex index off by %d" % abs(matches[0]))
+				nav_action.match_index = self._current_index
+			else:
+				logger.warning("No match for gotoHistoryIndex URL")
+
+		if cause_descr not in ["OnHistoryGoBack", "BrowserForward", "gotoHistoryIndex"]:
+			# Don't push a URL that matches the current one, unless the cause
+			# was form_submit (because there is POST data)
+			if (len(self._stack) == 0 or cause_descr == "form_submit"
+			or (url != self._stack[-1][0] and url != self._stack[-1][1])):
+				# Push the URL onto the stack
+				self._current_index += 1
+				self._stack[self._current_index:] = [(url, nav_action.original_url)]
+
+	def _search(self, i, target, backwards=True):
+		'''Beginning at index i, search for the target URL in the back stack.
+		Return the distance from i at which the target was found, or None if
+		the target was not found.
+
+		'''
+		if backwards:
+			seq = reversed(self._stack[:i+1])
+			sign = -1
+		else:
+			seq = self._stack[i:]
+			sign = 1
+
+		for dist, (url, orig_url) in enumerate(seq):
+			if url == target or orig_url == target:
+				return dist * sign
+		return None
+
 class Tab(object):
 	def __init__(self, win, tab_reg_event, cause_event, opened_new_tab_with):
 		# These attributes always exist
@@ -278,6 +356,8 @@ class Tab(object):
 		
 		# Ensure that a nav cause can never occur before the cause of a previous nav action
 		self.last_navigation_time = 0
+
+		self.back_stack = BackStack()
 
 	def __str__(self):
 		return self.tabId
@@ -333,8 +413,8 @@ class Tab(object):
 			elif cause is None and tab is self:
 				cause = evt
 
-		# If this is the first nav action on this tab, take cause from tab_open
-		if cause is None and not self.has_navigated():
+		# If it's the first nav action on the tab, take cause from tab_open
+		if not self.has_navigated() and (cause is None or self.restored):
 			cause = self.tab_open_cause
 
 		if cause:
@@ -447,6 +527,8 @@ class Tab(object):
 				nav_action.cause = None			
 			self.nav_action = nav_action
 
+		self.back_stack.process(self.nav_action)
+
 		if self.nav_action.location_change(event):
 			self.current_url = event["href"]
 			self.last_nav_action = self.nav_action
@@ -468,6 +550,7 @@ class NavigationAction(object):
 	def __init__(self, tab, url, from_url, cause_evt, javascript_used):
 		self.tab = tab
 		self.url = url
+		self.original_url = None # If the request was redirected
 		self.from_url = from_url or ""
 		self.cause = cause_evt
 		self.cause_time = None 
@@ -477,7 +560,12 @@ class NavigationAction(object):
 		self.load_started = False
 		self.location_change_time = 0
 		self.load_time = None
-		
+
+		# These fields indicate how far away the URL was in the back/fwd stack
+		# (Used for all navigation events, not just back and forward events)
+		self.back_distance = None
+		self.forward_distance = None
+
 	def shares_cause(self, other_nav_action):
 		"""Return True if nav_action has the same non-None cause is this one."""
 		if self.cause is None or other_nav_action is None:
@@ -510,6 +598,8 @@ class NavigationAction(object):
 		
 	def redirect(self, from_url, to_url):
 		self.check_url(from_url, "redirect")
+		if self.original_url is None:
+			self.original_url = self.url
 		self.url = to_url
 		
 	def location_change(self, event):
@@ -565,6 +655,18 @@ class NavigationAction(object):
 		if self.javascript_used:
 			cause_descr += "+js"
 		nav_event["cause"] = cause_descr
+		if self.original_url:
+			nav_event["original_url"] = self.original_url
+		if self.back_distance is not None:
+			nav_event["back_distance"] = self.back_distance
+		if self.forward_distance is not None:
+			nav_event["forward_distance"] = self.forward_distance
+
+		# This is only for events caused by gotoHistoryIndex, to indicate the
+		# index in the back/fwd stack at which the matching URL was found
+		if hasattr(self, "match_index"):
+			nav_event["match_index"] = self.match_index
+		
 		event_stream.append(nav_event)
 			
 class BrowserState(object):
